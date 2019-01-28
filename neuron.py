@@ -33,7 +33,6 @@ class Neuron:
         self.output_matrix = copy.copy(output_matrix)
         self.current_state = states[0]
         self._check_consistency()
-        #self.current_activity = self.get_activity([0]*len(receptor_weights))
 
     Range = namedtuple('Range', ['low', 'up'])
 
@@ -43,7 +42,7 @@ class Neuron:
         return OrderedDict( sorted(named, key=lambda t: t[0] ))
 
     def transmitter_names(self):
-        return self.transmitter_emission.keys()
+        return list(self.transmitter_emission.keys())
         
     def get_total_input(self, concentrations):
         """ concentrations - dict {'ACH':0, 'GLU':0.5} """
@@ -121,8 +120,40 @@ class Neuron:
         for elem in elem_list:
             if elem.low >= elem.up:
                 raise ValueError("Inconsistent bounds: low= " + str(elem.low) + ' up= ' + str(elem.up))
+    
+    @staticmethod
+    def _check_matrix(states, inputs, outputs, matrix):
+        """
+        >>> Neuron._check_matrix(['s0', 's1'], [-1, 0], [0, 1], {'s0':{-1:0, 0:1}, 's2':{-1:0, 0:0}})
+        Traceback (most recent call last):
+        ...
+        ValueError: Incorrect states= ['s0', 's1'], matrix states= ['s0', 's2']
+        """
+        #check states
+        _raise_condition(set(states) == matrix.keys(), 
+        "Incorrect states= " + str(states) + ", matrix states= " + str(list(matrix.keys())))
+        #check inputs
+        for state in states:
+            _raise_condition(matrix[state].keys() == set(inputs), 
+            "Incorrect inputs for state=" + str(state) + " : " + str(matrix[state]))
+            _raise_condition( set(matrix[state].values()) <= set(outputs), 
+            "Incorrect outputs: " + str(outputs) + ", matrix row: " + str(matrix[state]))
+            #for out in matrix[state].values():
+            #    _raise_condition(out in set(outputs),
+            #    "Matrix Error: Output " + str(out) + " is not present. Outputs: " + str(outputs) + ", matrix row: " + str(matrix[state]))
+        
+
     def _check_automaton(self):
-        pass
+        """ Checks that transition and output matrices are consistent with inputs, activity levels and states
+        """
+        inputs = self.thresholds.keys()
+        Neuron._check_matrix(self.states, inputs, self.states, self.state_trans_matrix)
+        Neuron._check_matrix(self.states, inputs, self.activity_levels, self.output_matrix)
+        #check states
+        #_raise_condition(set(states) == transition_matrix.keys(), 
+        #"Transition matrix have incorrect states: " + "states=" + str(states) + ", matrix states=" + str(transition_matrix.keys()))
+        #_raise_condition(set(states) == output_matrix.keys(), 
+        #"Output matrix have incorrect states: " + "states=" + str(states) + ", matrix states=" + str(output_matrix.keys()))
 
 def create_tonic(name, receptor_weights, transmitter_emission, activity_levels, thresholds):
     states = ["s0"]
@@ -168,7 +199,8 @@ def create_oscillator(name, receptor_weights, transmitter_emission, activity_lev
         states, state_trans_matrix, output_matrix)
 
 def _list_transmitters(neurons):
-    return set([tr for tr in n.transmitter_names() for n in neurons])
+    #all_tr = set([n.transmitter_names() for n in neurons])
+    return set([tr for n in neurons for tr in n.transmitter_names()])
 
 class Experiment:
     def __init__(self, name, duration, neurons, transmitters, injection = None):
@@ -185,7 +217,7 @@ class Experiment:
             self.duration = duration
         else:
             raise ValueError("Duration must be positive integer, duration = " + str(duration))
-        self.neurons = neurons
+        self.neurons = copy.copy(neurons)
         self.transmitters = transmitters
         if injection is None:
             #injection = dict([(k,[0]*duration) for k in transmitters])
@@ -201,14 +233,17 @@ def conc_add(conc_left, conc_right):
     return dict([(tr, conc_left[tr]+conc_right[tr]) for tr in conc_left])
 
 class ModelState:
-    def __init__(self, activities, concentrations, flag = True):
+    def __init__(self, activities, concentrations, flag = True, states=[]):
         """ ModelState represents one step of a rhythm. It consists of two dictionaries:
         activities - neurons activity {'N1':1, 'N2':0}
         concentrations - transmitter concentrations {'ACH':0.5, 'GLU':0}
+        flag - True if the given state is a valid combination of neurons' activity and the transmitters' concentration
+        states - current internal states of the neurons. {'N1':'default', 'N2':'inhibited'}
         """
         self.activities = activities.copy()
         self.concentrations = concentrations.copy()
         self.is_valid = flag
+        self.states = states
 
 def generate_rhythm(experiment):
     """ Generate a rhythm for the specified experiment.
@@ -223,6 +258,9 @@ def generate_rhythm(experiment):
     for t in range(1, experiment.duration+1):
         _update_states(experiment.neurons, history[t-1].concentrations)
         next_model_state = _concurrent_activation(experiment.neurons, history[t-1].activities, history[t-1].concentrations, experiment.injection[t-1])
+        #all_branches = _recursive_activation(experiment.neurons, \
+        #[history[t-1].activities], [], experiment.injection[t-1])
+        #next_model_state = all_branches[0].state
         history.append( next_model_state )
         if not next_model_state.is_valid: #the concurrent activation stopped in a cycle
             return history
@@ -245,8 +283,8 @@ def _concurrent_activation(neurons, initial_activity, initial_concentrations, in
     activities = initial_activity.copy()
     act_hist = [initial_activity]
     concentrations = initial_concentrations
-    while not _is_consistent(neurons, activities):
-        n = _choose_neuron(neurons, activities, concentrations)
+    while not _is_consistent(neurons, activities, injection):
+        n = _choose_neuron(neurons, activities, initial_concentrations, injection)
         concentrations = conc_add(get_concentration(neurons, activities), injection)
         activities[n.name] = n.get_activity(concentrations)
         if (len(act_hist) >= len(neurons)) and (activities in act_hist):
@@ -254,25 +292,64 @@ def _concurrent_activation(neurons, initial_activity, initial_concentrations, in
         else:
             act_hist.append(activities.copy())
 
-    return ModelState(activities, get_concentration(neurons, activities))
+    return ModelState(activities, conc_add(get_concentration(neurons, activities), injection))
 
-def _choose_neuron(neurons, activities, past_concentrations):
+def _recursive_activation(neurons, activity_history, order=[], injection=[]):
+    ''' 
+    TODO:
+    Test, document
+    '''
+    Branch = namedtuple('Branch', ['order', 'state', 'activity_history'])
+    initial_activity = activity_history[-1]
+    concentrations = get_concentration(neurons, initial_activity, injection)
+    def _update_activity(nrn):
+        new_activity = initial_activity.copy()
+        new_activity[nrn.name] = nrn.get_activity(concentrations)
+        return new_activity
+    unstable_neurons = _choose_unstable_neurons(neurons, initial_activity, injection)
+    #if initial_acivity is already a consistent state then just return it
+    if _is_consistent(neurons, initial_activity, injection):
+        valid_final_state = ModelState(initial_activity, concentrations, True)
+        return [ Branch(order, valid_final_state, activity_history ) ]
+    all_branches_history = []
+    for nrn in unstable_neurons:
+        new_order = order + [nrn]
+        new_activity = _update_activity(nrn)
+        new_activity_history = activity_history + [new_activity]
+        new_concentration = get_concentration(neurons, new_activity, injection)
+        if (len( activity_history) >= len(neurons)) and (new_activity in  activity_history):#the algorithm enters a loop
+            invalid_final_state = ModelState(new_activity, new_concentration, False)
+            all_branches_history.append( Branch(new_order, invalid_final_state, new_activity_history ))
+        elif _is_consistent(neurons, new_activity, injection):
+            valid_final_state = ModelState(new_activity, new_concentration, True)
+            all_branches_history.append( Branch(new_order, valid_final_state, new_activity_history ))
+        else:
+            all_branches_history = all_branches_history + \
+            _recursive_activation(neurons, new_activity_history, new_order, injection)
+    return all_branches_history
+
+def _choose_unstable_neurons(neurons, activities, injection):
+    concentrations = get_concentration(neurons, activities, injection)
+    active_neurons = [n for n in neurons if n.get_activity(concentrations)!=activities[n.name] ]
+    return active_neurons
+
+def _choose_neuron(neurons, activities, past_concentrations, injection):
     """ Choose a neuron that should change its activity"""
-    concentrations = get_concentration(neurons, activities)
+    concentrations = get_concentration(neurons, activities, injection)
     #past_concentrations = get_concentration(neurons, past_activities)
     active_neurons = [n for n in neurons if n.get_activity(concentrations)!=activities[n.name] ]
     return min(active_neurons, key = lambda n: n.get_time(concentrations, past_concentrations) )
     
-def _is_consistent(neurons, activities):
+def _is_consistent(neurons, activities, injection):
     """ Checks whether the activities vector are valid for given neurons    
     """
-    concentrations = get_concentration(neurons, activities)
+    concentrations = get_concentration(neurons, activities, injection)
     for n in neurons:
         if n.get_activity(concentrations) != activities[n.name]:
             return False
     return True
 
-def get_concentration(neurons, activities):
+def get_concentration(neurons, activities, injection = []):
     """ Returns concentration that the neurons produce under given activities
         activities - dict {'N1':1, 'N2':1.5, 'N3':0}
     """
@@ -280,8 +357,12 @@ def get_concentration(neurons, activities):
     for n in neurons:
         for tr in n.transmitter_names():
             concentration[tr] += n.transmitter_emission[tr]*activities[n.name]
+    if len(injection)>0:
+        concentration = conc_add(concentration, injection)
     return concentration
 
+def _list_states(neurons):
+    return dict( [ (n.name, n.current_state) for n in neurons] )
     
 def _list_names(neurons):
     return [n.name for n in neurons]
@@ -296,8 +377,8 @@ def _zeros_dict(keys):
 def _init_dict(keys, val):
     return dict([(x, val) for x in keys])
 
-def _init_list(length, val):
-    return [val]*length
+#def _init_list(length, val):
+#    return [val]*length
    
 def print_rhythm_ascii(history):
     """ 
@@ -316,6 +397,17 @@ def print_rhythm_ascii(history):
         tr_str = tr_name + '\t|' + '|'.join([format_num(ms.concentrations[tr_name]) for ms in history]).replace('|0', '| ')
         print(tr_str)
 
+
+def _raise_condition(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+def make_configuration_space(neurons):
+    '''Generates a configuration space as a graph of states and transitions.
+    Returns: a named tuple (states, transitions) where states is a set of the ensemble's states. 
+    An ensemble state is a named tuple (neurons_states, activities)
+    A transition is a named tuple (in_state, out_state, branches)
+    '''
 
 
 #Test code goes below:
