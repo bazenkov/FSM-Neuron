@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from graphviz import Digraph
 
 def plot_history(history):
     """ Plots the history in a single figure. Each neuron and each transmitter is plotted on a separate axis.
@@ -31,7 +32,9 @@ def plot_neurons(history, options):
         x = np.array(times)
         #plt.subplot(1 + i_neuron, 1, i_neuron+1)
         ax_list[i_neuron].bar(x, n_act, color=n_color, hatch='/')
-        ax_list[i_neuron].set_ylabel( n_name, rotation='horizontal' )
+        ax_list[i_neuron].set_ylabel( n_name, rotation='horizontal', fontsize='xx-large', fontweight='bold', labelpad=20 )
+        ax_list[i_neuron].tick_params(labelsize='x-large')
+        
     return fig, ax_list
 
 def plot_transmitters(fig, ax_list, history, options):
@@ -42,8 +45,31 @@ def plot_transmitters(fig, ax_list, history, options):
         x = np.array(times)
         i_plot = i_tr + _num_neurons(history)
         ax_list[i_plot].bar(x, tr_conc, color=tr_colors[i_tr])
-        ax_list[i_plot].set_ylabel(tr_name, rotation='horizontal')
+        ax_list[i_plot].set_ylabel(tr_name, rotation='horizontal', fontsize='xx-large', fontweight='bold', labelpad=20)
+        y_ticks = list(range(0, np.round(max(tr_conc)).astype(int)+1))
+        ax_list[i_plot].tick_params(labelsize='x-large')
+        #ax_list[i_plot].set_yticks(y_ticks)
     
+def _dict_to_str(some_dict, kv_delim='=', elem_delim=', '):
+        return elem_delim.join([k + kv_delim + str(some_dict[k]) for k in some_dict.keys()])
+
+def plot_configuration_space(net_states, transitions, file):
+    def node_label(state):
+        return _dict_to_str(state._asdict(), elem_delim='\n')
+    def edge_label(tr):
+        return _dict_to_str(tr.activity)
+    dot = Digraph(name='Configuration space')
+    for ns in net_states:
+        dot.node(node_label(ns), shape='box')
+    for tr in transitions:
+        dot.edge(node_label(tr.inp), node_label(tr.out), label=edge_label(tr))
+    dot.render(file, view=True)
+
+def plot_branches(branches):
+    dot = Digraph();
+    for b in branches:
+
+
 def get_neurons_names(history):
     return history[0].activities.keys()
 
