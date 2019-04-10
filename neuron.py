@@ -75,6 +75,7 @@ class Neuron:
     def get_current_state(self):
         return self.current_state
     
+    
     def get_time(self, concentrations, past_concentrations):
         """ Returns the time used to sort neurons' firing order """
         delta = self.get_total_input(concentrations)
@@ -90,8 +91,6 @@ class Neuron:
             return (low_b - past_delta)/abs(delta)
         else:
             return float("inf")
-        # up_bound = self.thresholds
-        #return 1/(1+self.get_activity(concentrations))
 
     def _check_consistency(self):
         self._check_transmitter_names()
@@ -266,6 +265,27 @@ def generate_rhythm(experiment):
             return history
     return history
 
+def generate_rhythm_recursive(experiment):
+    """ Generate a rhythm for the specified experiment.
+    Returns an object with two fields:
+        activities - dict of neurons' activities [{"N1":1, "N2":0}, ...]
+            len(activity) = experiment.duration
+        concentrations - dict of concentrations
+    """
+    init_concentrations = _zeros_dict(experiment.transmitters)
+    init_activities = get_activities(experiment.neurons, init_concentrations)
+    history = [ ModelState(init_activities, init_concentrations) ]
+    for t in range(1, experiment.duration+1):
+        _update_states(experiment.neurons, history[t-1].concentrations)
+        #next_model_state = _concurrent_activation(experiment.neurons, history[t-1].activities, history[t-1].concentrations, experiment.injection[t-1])
+        all_branches = _recursive_activation(experiment.neurons, \
+            [history[t-1].activities], [], experiment.injection[t-1])
+        next_model_state = all_branches[0].state
+        history.append( next_model_state )
+        if not next_model_state.is_valid: #the concurrent activation stopped in a cycle
+            return history
+    return history
+
 def get_activities(neurons, concentrations):
     """ Returns a dictionary  {neuron_name:activity} 
     
@@ -294,12 +314,22 @@ def _concurrent_activation(neurons, initial_activity, initial_concentrations, in
 
     return ModelState(activities, conc_add(get_concentration(neurons, activities), injection))
 
+Branch = namedtuple('Branch', ['order', 'state', 'activity_history'])
+
 def _recursive_activation(neurons, activity_history, order=[], injection=[]):
     ''' 
-    TODO:
-    Test, document
+    Compute the next activation order for the neurons under the specified injection. 
+    The history of previous activations is given
+    neurons - an iterable of Neuron objects
+    activity_history - a list of previous activities like [{'N1':1, 'N2':1}, {'N1':1, 'N2':0}]
+    order - a list of neuron names like ['N1', 'N2']
+    injection - the transmitter concentrations present by default in the ECS. {'ACH':0.5, 'GLU':0}
+    
+    Returns:
+    a tuple ('order', 'state', 'activity_history')
+    TODO: documentation
     '''
-    Branch = namedtuple('Branch', ['order', 'state', 'activity_history'])
+    
     initial_activity = activity_history[-1]
     concentrations = get_concentration(neurons, initial_activity, injection)
     def _update_activity(nrn):
@@ -370,6 +400,7 @@ def _list_names(neurons):
 def _update_states(neurons, concentrations):
     for n in neurons:
         n.next_state(concentrations)
+    return _list_states(neurons)
 
 def _zeros_dict(keys):
     return dict([(x, 0) for x in keys])
@@ -402,13 +433,49 @@ def _raise_condition(condition, message):
     if not condition:
         raise ValueError(message)
 
-def make_configuration_space(neurons):
+
+def make_configuration_space(neurons, injection=[]):
     '''Generates a configuration space as a graph of states and transitions.
     Returns: a named tuple (states, transitions) where states is a set of the ensemble's states. 
-    An ensemble state is a named tuple (neurons_states, activities)
-    A transition is a named tuple (in_state, out_state, branches)
+    An ensemble state is a set of neurons' states ['act', 'inh'], ordered by the neurons' name
+    A transition is a named tuple (activities, concentrations, branches)
     '''
+    def _set_neurons_states(neurons, net_state):
+        for n in neurons:
+            n.current_state = getattr(net_state, n.name)
+    def _list_states_sorted(neurons):
+        return [ n.current_state for n in sorted(neurons, key = lambda n : n.name)]
+    
+    NetworkState = namedtuple('NetworkState', sorted(_list_names(neurons)))
+    Transition = namedtuple('Transition', ['inp', 'out', 'activity', 'injection', 'branch'])
 
+    initial_net_state = NetworkState._make(_list_states_sorted(neurons))
+    all_states = {initial_net_state}
+    all_transitions = []
+    front = [initial_net_state]
+    while len(front)>0:
+        #expand next vertice
+        current_net_state = front.pop(0)
+        _set_neurons_states(neurons, current_net_state)
+        #start recursive activation
+        init_activities = get_activities(neurons, injection)
+        #all valid branches from recursive activation
+        all_branches = _recursive_activation(neurons, [init_activities], [], injection)
+        for branch in all_branches:
+            #if final state is valid and not in the all_states
+            neurons_copy = copy.deepcopy(neurons)
+            _update_states(neurons_copy, branch.state.concentrations)
+            new_net_state = NetworkState._make(_list_states_sorted(neurons_copy))
+            if branch.state.is_valid : #and new_net_state not in all_states
+                all_transitions.append(Transition(current_net_state, new_net_state, branch.state.activities, injection, branch))
+                if new_net_state not in all_states:
+                    all_states.add(new_net_state)
+                    front.append(new_net_state)
+    return all_states, all_transitions      
+
+
+
+    
 
 #Test code goes below:
 if __name__ == "__main__":

@@ -1,34 +1,37 @@
 import neuron as nrn
 import copy
-#import networkx as net
+import networkx as net
+import plot as plt
 from plot import plot_history
+from graphviz import Digraph
+import decimal
 
 INFINITY = float('inf')
 MINUS_INFINITY = -float('inf')
 
 def create_hco():
     n_tonic_pir = nrn.Neuron(
-    'N1', #name
-    {#receptor_weights 
+    name = 'N1', 
+    receptor_weights = { 
         'ACH':-1, 
         'GLU':0}, 
-    {#emission
+    transmitter_emission = {
         'ACH':0, 
         'GLU':1
     }, 
-    (0, 1, 2), #activity levels
-    { #thresholds
+    activity_levels = (0, 1, 2),
+    thresholds = {
         -2: (MINUS_INFINITY, -1),
         -1: (-1, -0.5), 
          0: (-0.5, 0.5), 
          1: (0.5, INFINITY)
     },
-    ['act', 'inh'], #states
-    {#state_trans_matrix 
+    states = ['act', 'inh'],
+    state_trans_matrix = { 
         'act':{-2:'inh', -1:'inh', 0:'act', 1:'act'}, 
         'inh':{-2:'inh', -1:'act', 0:'act', 1:'act'}
     }, 
-    {#output matrix
+    output_matrix = {
         'act': {-2:0, -1:0, 0:1, 1:2}, 
         'inh': {-2:0, -1:2, 0:2, 1:2}
     }) 
@@ -124,7 +127,7 @@ def create_feeding_snail():
     
     def create_n3():
         n3 = nrn.Neuron(
-            'N3t', 
+            'N3', 
             {'ach': -1, 'glu':-0.25},
             {'ach': 0, 'glu':0.5}, 
             (0, 1, 2),
@@ -151,21 +154,86 @@ def create_feeding_snail():
     
 
 def demo_feeding_cpg():
-    duration = 15
+    duration = 20
+    T_INJ_ACH = 6
+    T_INJ_GLU = 13
     exp = nrn.Experiment('Feeding CPG', duration, create_feeding_snail(), ['ach', 'glu'])
-    hist = nrn.generate_rhythm(exp)
-   # plot_history(hist)
     inj = [{'ach':0, 'glu':0}]*duration
-    for i in range(duration // 2,duration):
-        inj[i] = {'ach':inj[i-1]['ach']+0.2, 'glu':0}
+    #delta = {'ach':0, 'glu':0.15}
+    FIXED_INJ_ACH = 1
+    FIXED_INJ_GLU = 1
+    for i in range(T_INJ_ACH, T_INJ_GLU):
+        inj[i] = {'ach':FIXED_INJ_ACH, 'glu':0}
+    for i in range(T_INJ_GLU, duration):
+        inj[i] = {'ach':0, 'glu':FIXED_INJ_GLU}
+
     exp.injection = inj
-    hist = nrn.generate_rhythm(exp)
+    hist = nrn.generate_rhythm_recursive(exp)
     plot_history(hist)
 
 #def print_automaton(neuron):
 
+def print_branch(branch):
+    '''
+    Branch is a tuple ('order', 'state', 'activity_history')
+    '''
+    #print( branch.order )
+    def format_num(num):
+        width = 4
+        precision = 2
+        return f"{decimal.Decimal(num):{width}.{precision}}"
+    neuron_names = sorted([n_name for n_name in branch.activity_history[0]])
+    for n_name in neuron_names:#print neurons
+        n_str = n_name + '\t|' + '|'.join([format_num(act[n_name]) for act in branch.activity_history]).replace('|0', '| ')
+        print(n_str)
+    
+
+
+def demo_recursive_activation():
+    neurons = create_hco()
+    start_activity = [nrn.get_activities( neurons, nrn._zeros_dict(nrn._list_transmitters(neurons)))]
+    branches = nrn._recursive_activation( neurons, start_activity, order=[], injection=[])
+    for b in branches:
+        print_branch(b)
+    exp = nrn.Experiment("Test experiment", 10, neurons, ['ACH', 'GLU'])
+    hist = nrn.generate_rhythm_recursive(exp)
+    plot_history(hist)
+
+def demo_configuration_space():
+    neurons = create_hco()
+    injection = {'ACH':0, 'GLU':0}
+    all_states, all_transitions = nrn.make_configuration_space(neurons, injection)
+    print(all_states)
+    print(all_transitions)
+    plt.plot_configuration_space(all_states, all_transitions, 'hco_no_inj.gv')
+    neurons = create_feeding_snail()
+    injection = {'ach':1, 'glu':0}
+    all_states, all_transitions = nrn.make_configuration_space(neurons, injection)
+    print(all_states)
+    print(all_transitions)
+    plt.plot_configuration_space(all_states, all_transitions, 'snail_ach_inj.gv')
+
+def demo_graphviz():
+    dot = Digraph(name='Configuration space')
+    n1 = 'burst\n rest\n free'
+    n2 = 'burst-1\n burst\n free'
+    n3 = 'charge\n rest\n pir'
+    dot.node(n1, shape='box')
+    dot.node(n2, shape='box')
+    dot.node(n3, shape='box')
+    dot.edge(n1, n2, color='red', label='ach:1')
+    dot.edge(n2, n1, color='green', label='glu:1')
+    dot.edge(n2, n3)
+    dot.edge(n3, n1)
+    dot.render('test.gv', view=True)
+
+def demo_netorkx():
+    pass
+
 if __name__ == "__main__":
     #neurons = demo_hco()
     #print(neurons)
-    demo_feeding_cpg()
-
+    #demo_feeding_cpg()
+    #demo_recursive_activation()
+    demo_configuration_space()
+    #demo_graphviz()
