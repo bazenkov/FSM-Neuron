@@ -205,13 +205,19 @@ def demo_configuration_space():
     all_states, all_transitions = nrn.make_configuration_space(neurons, injection)
     print(all_states)
     print(all_transitions)
-    plt.plot_configuration_space(all_states, all_transitions, 'hco_no_inj.gv')
+    plt.plot_configuration_space(all_states, all_transitions, 'hco_no_inj.gv', \
+        transmitter_colors={'ach':'red', 'glu':'green'})
     neurons = create_feeding_snail()
-    injection = {'ach':1, 'glu':0}
+    injection = {'ach':0, 'glu':0}
     all_states, all_transitions = nrn.make_configuration_space(neurons, injection)
     print(all_states)
     print(all_transitions)
-    plt.plot_configuration_space(all_states, all_transitions, 'snail_ach_inj.gv')
+    plt.plot_configuration_space(all_states, all_transitions, 'snail_ach_inj.gv', \
+        transmitter_colors={'ach':'red', 'glu':'green'})
+    plt.plot_branches([all_transitions[0].branch], 'snail_branches_0.gv')
+    plt.plot_branches([all_transitions[1].branch], 'snail_branches_1.gv')
+    plt.plot_branches([all_transitions[2].branch], 'snail_branches_2.gv')
+    
 
 def demo_graphviz():
     dot = Digraph(name='Configuration space')

@@ -53,7 +53,15 @@ def plot_transmitters(fig, ax_list, history, options):
 def _dict_to_str(some_dict, kv_delim='=', elem_delim=', '):
         return elem_delim.join([k + kv_delim + str(some_dict[k]) for k in some_dict.keys()])
 
-def plot_configuration_space(net_states, transitions, file):
+def plot_configuration_space(net_states, transitions, file, transmitter_colors = []):
+    def get_color(tr):
+        color = 'black'
+        if len(transmitter_colors) > 0:
+            tr_max_injection= max(tr.injection.keys(), key=lambda x : tr.injection[x])
+            if tr.injection[tr_max_injection]>0:
+                color = transmitter_colors[tr_max_injection]
+        return color
+
     def node_label(state):
         return _dict_to_str(state._asdict(), elem_delim='\n')
     def edge_label(tr):
@@ -62,13 +70,24 @@ def plot_configuration_space(net_states, transitions, file):
     for ns in net_states:
         dot.node(node_label(ns), shape='box')
     for tr in transitions:
-        dot.edge(node_label(tr.inp), node_label(tr.out), label=edge_label(tr))
+        dot.edge(node_label(tr.inp), node_label(tr.out), \
+                    label=edge_label(tr), \
+                    color = get_color(tr))
     dot.render(file, view=True)
 
-def plot_branches(branches):
-    dot = Digraph();
+def plot_branches(branches, file):
+    #Branch = namedtuple('Branch', ['order', 'state', 'activity_history'])
+    dot = Digraph()
     for b in branches:
-
+        start_label = _dict_to_str(b.activity_history[0])
+        dot.node(start_label)
+        for act in b.activity_history[1:]:
+            next_label = _dict_to_str(act)
+            dot.node(next_label)
+            dot.edge(start_label, next_label)
+            start_label = next_label
+    dot.render(file, view=True)
+    pass
 
 def get_neurons_names(history):
     return history[0].activities.keys()

@@ -408,9 +408,6 @@ def _zeros_dict(keys):
 def _init_dict(keys, val):
     return dict([(x, val) for x in keys])
 
-#def _init_list(length, val):
-#    return [val]*length
-   
 def print_rhythm_ascii(history):
     """ 
     history - list of ModelState objects
